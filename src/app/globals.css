@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+/*
+ * Theme tokens. Chart colors are CSS custom properties so Recharts marks
+ * (fill/stroke via var()) swap automatically with prefers-color-scheme —
+ * the dark values are separately validated steps of the same hues, not an
+ * automatic flip. Palette checked with the dataviz validator:
+ *   light categorical (elec/gas/export) worst adjacent CVD dE 47.2, PASS;
+ *   aqua + yellow sit below 3:1 on the light surface, so every chart ships
+ *   a table view and full tooltips as the relief channel.
+ */
+
+:root {
+  --background: #f9f9f7;
+  --foreground: #141413;
+  --surface-card: #fcfcfb;
+  --muted: #52514e;
+  --faint: #898781;
+  --hairline: rgba(11, 11, 11, 0.1);
+
+  /* Series colors follow the entity, everywhere in the app. */
+  --chart-elec: #2a78d6;
+  --chart-gas: #1baf7a;
+  --chart-export: #eda100;
+  /* Ordinal partner to --chart-elec for the costs stack (standing charge). */
+  --chart-standing: #86b6ef;
+
+  --chart-grid: #e1e0d9;
+  --chart-axis: #c3c2b7;
+  --chart-tick: #706f68;
+  --chart-cursor: rgba(11, 11, 11, 0.05);
+
+  /* Status — reserved, never used as series colors. */
+  --status-ok: #0ca30c;
+  --status-warn: #fab219;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0d0d0d;
+    --foreground: #f2f2ee;
+    --surface-card: #1a1a19;
+    --muted: #c3c2b7;
+    --faint: #898781;
+    --hairline: rgba(255, 255, 255, 0.1);
+
+    --chart-elec: #3987e5;
+    --chart-gas: #199e70;
+    --chart-export: #c98500;
+    --chart-standing: #86b6ef;
+
+    --chart-grid: #2c2c2a;
+    --chart-axis: #383835;
+    --chart-tick: #a3a29b;
+    --chart-cursor: rgba(255, 255, 255, 0.06);
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--surface-card);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-hairline: var(--hairline);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}

@@ -1,0 +1,36 @@
+{
+  "name": "energy-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "luxon": "^3.7.2",
+    "next": "16.2.10",
+    "node-cron": "^4.6.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "^3.9.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/luxon": "^3.7.2",
+    "@types/node": "^20",
+    "@types/node-cron": "^3.0.11",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  }
+}
