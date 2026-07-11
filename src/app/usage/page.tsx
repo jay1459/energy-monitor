@@ -30,20 +30,24 @@ import {
   pounds,
   shortDayLabel,
 } from "@/components/format";
+import { DateRangeControls } from "@/components/DateRangeControls";
 import { Card, ErrorNote, Segmented, Skeleton, StatTile } from "@/components/ui";
 import { useApi, useLocalToday } from "@/components/useApi";
 import { DateTime } from "luxon";
-import { LONDON, addLocalDays } from "@/lib/time";
+import { LONDON, addLocalDays, localDaySpan } from "@/lib/time";
 import type { Resolution, StatusResponse, UsageResponse } from "@/lib/types";
 
 /**
- * Usage explorer: one series at a time (fuel tab), preset ranges ending
- * yesterday (REST data is day-late), resolution toggle. Half-hour resolution
- * is only offered for ranges of 14 days or fewer.
+ * Usage explorer: one series at a time (fuel tab), arrow/preset/custom date
+ * range (presets end yesterday — REST data is day-late — and roll forward at
+ * midnight; arrow-stepped or hand-picked ranges stay pinned), resolution
+ * toggle. Half-hour resolution is only offered for ranges of 14 days or
+ * fewer.
  */
 
 type FuelTab = "electricity" | "gas" | "export";
-type RangeDays = 7 | 30 | 90;
+/** A rolling last-N-days preset, or a pinned custom range. */
+type RangeState = { preset: number } | { from: string; to: string };
 
 const TAB_NAME: Record<FuelTab, string> = {
   electricity: "Electricity",
@@ -81,12 +85,14 @@ function bucketLabel(t: string, resolution: Resolution): string {
 
 export default function UsagePage() {
   const [tab, setTab] = useState<FuelTab>("electricity");
-  const [rangeDays, setRangeDays] = useState<RangeDays>(30);
+  const [range, setRange] = useState<RangeState>({ preset: 30 });
   const [resolution, setResolution] = useState<Resolution>("day");
 
   const today = useLocalToday();
-  const from = addLocalDays(today, -rangeDays);
-  const to = addLocalDays(today, -1);
+  const maxTo = addLocalDays(today, -1);
+  const from = "preset" in range ? addLocalDays(maxTo, -(range.preset - 1)) : range.from;
+  const to = "preset" in range ? maxTo : range.to;
+  const span = localDaySpan(from, to);
 
   const status = useApi<StatusResponse>("/api/status");
   const hasGas =
@@ -106,11 +112,18 @@ export default function UsagePage() {
   const totalCostP = costed.reduce((sum, p) => sum + (p.costP ?? 0), 0);
   const missingRates = costed.length < points.length;
 
-  const pickRange = (days: RangeDays) => {
-    setRangeDays(days);
+  const dropHalfhourIfTooWide = (days: number) => {
     if (days > HALFHOUR_MAX_DAYS && resolution === "halfhour") {
       setResolution("day");
     }
+  };
+  const pickPreset = (days: number) => {
+    setRange({ preset: days });
+    dropHalfhourIfTooWide(days);
+  };
+  const pickCustom = (f: string, t: string) => {
+    setRange({ from: f, to: t });
+    dropHalfhourIfTooWide(localDaySpan(f, t));
   };
 
   const color = SERIES_COLOR[tab];
@@ -183,15 +196,14 @@ export default function UsagePage() {
             { value: "export", label: "Solar export", disabled: !hasExport },
           ]}
         />
-        <Segmented<`${RangeDays}`>
-          label="Range"
-          value={`${rangeDays}`}
-          onChange={(v) => pickRange(Number(v) as RangeDays)}
-          options={[
-            { value: "7", label: "7 days" },
-            { value: "30", label: "30 days" },
-            { value: "90", label: "90 days" },
-          ]}
+        <DateRangeControls
+          from={from}
+          to={to}
+          maxTo={maxTo}
+          activePreset={"preset" in range ? range.preset : null}
+          onPreset={pickPreset}
+          onCustom={pickCustom}
+          label="Date range"
         />
         <Segmented<Resolution>
           label="Resolution"
@@ -201,16 +213,13 @@ export default function UsagePage() {
             {
               value: "halfhour",
               label: "Half-hour",
-              disabled: rangeDays > HALFHOUR_MAX_DAYS,
+              disabled: span > HALFHOUR_MAX_DAYS,
             },
             { value: "day", label: "Day" },
             { value: "week", label: "Week" },
             { value: "month", label: "Month" },
           ]}
         />
-        <span className="text-xs text-faint">
-          {dayLabel(from)} – {dayLabel(to)}
-        </span>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:max-w-md">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -30,8 +30,9 @@ import {
   Skeleton,
   StatTile,
 } from "@/components/ui";
+import { DateRangeControls } from "@/components/DateRangeControls";
 import { useApi, useLocalToday } from "@/components/useApi";
-import { addLocalDays, localDateRange } from "@/lib/time";
+import { addLocalDays, localDateRange, localDaySpan } from "@/lib/time";
 import type { CostsResponse, StatusResponse } from "@/lib/types";
 
 /**
@@ -57,10 +58,16 @@ interface DayRow {
   partial: boolean;
 }
 
+/** A rolling last-N-days preset, or a pinned custom range. */
+type RangeState = { preset: number } | { from: string; to: string };
+
 export default function CostsPage() {
   const today = useLocalToday();
-  const from = addLocalDays(today, -30);
-  const to = addLocalDays(today, -1);
+  const [range, setRange] = useState<RangeState>({ preset: 30 });
+  const maxTo = addLocalDays(today, -1);
+  const from = "preset" in range ? addLocalDays(maxTo, -(range.preset - 1)) : range.from;
+  const to = "preset" in range ? maxTo : range.to;
+  const span = localDaySpan(from, to);
 
   const status = useApi<StatusResponse>("/api/status");
   const costs = useApi<CostsResponse>(`/api/costs?from=${from}&to=${to}`);
@@ -134,9 +141,19 @@ export default function CostsPage() {
 
   return (
     <div className="space-y-4">
+      <DateRangeControls
+        from={from}
+        to={to}
+        maxTo={maxTo}
+        activePreset={"preset" in range ? range.preset : null}
+        onPreset={(days) => setRange({ preset: days })}
+        onCustom={(f, t) => setRange({ from: f, to: t })}
+        label="Date range"
+      />
+
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <StatTile
-          label="Import cost (30 days)"
+          label={`Import cost (${span} day${span === 1 ? "" : "s"})`}
           value={totals ? (rows.length > 0 ? pounds(totals.importP) : "—") : null}
           sub={rows.length > 0 ? "energy + standing charges" : "no data yet"}
           loading={costs.loading && !costs.data}
@@ -263,7 +280,7 @@ export default function CostsPage() {
         )}
       </Card>
 
-      <Card title="Last 14 days">
+      <Card title={rows.length > 14 ? "Last 14 days of range" : "Daily detail"}>
         {!costs.data ? (
           <Skeleton className="h-48 w-full" />
         ) : tableRows.length === 0 ? (

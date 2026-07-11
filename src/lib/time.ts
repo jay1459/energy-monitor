@@ -75,6 +75,11 @@ export function addLocalDays(date: string, days: number): string {
   return parseLocalDate(date).plus({ days }).toISODate()!;
 }
 
+/** Inclusive day count of a local-date range (assumes from <= to). */
+export function localDaySpan(from: string, to: string): number {
+  return Math.round(parseLocalDate(to).diff(parseLocalDate(from), "days").days) + 1;
+}
+
 /** Inclusive list of local dates from `from` to `to`. */
 export function localDateRange(from: string, to: string): string[] {
   const out: string[] = [];
