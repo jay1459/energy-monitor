@@ -329,6 +329,52 @@ export function getSummary(): SummaryResponse {
       .sort()[0]!;
   }
 
+  // Month-end projection. One completeness definition rules both terms: a
+  // date is "billed" only when EVERY meter active by then has a COMPLETE
+  // row for it (a missing row — gas routinely lags electricity by a day —
+  // is not complete; HAVING MIN(...) alone can't see absent rows). Every
+  // month day is then either wholly in the actual term or wholly projected,
+  // never both. "Active by then" = the meter has data on or before the date,
+  // so a meter added mid-history doesn't poison older dates.
+  const dailyNets = db
+    .prepare(
+      `SELECT dc.local_date AS d,
+              SUM(CASE WHEN mp.is_export = 1 THEN -dc.total_p ELSE dc.total_p END) AS netP,
+              COUNT(*) AS meterRows,
+              MIN(CASE WHEN dc.intervals_present >= dc.intervals_expected THEN 1 ELSE 0 END) AS allComplete
+         FROM daily_costs dc JOIN meter_points mp ON mp.id = dc.meter_point_id
+        GROUP BY dc.local_date
+        ORDER BY dc.local_date DESC`
+    )
+    .all() as { d: string; netP: number; meterRows: number; allComplete: number }[];
+  const meterFirstDates = (
+    db
+      .prepare(
+        "SELECT MIN(local_date) AS firstDate FROM daily_costs GROUP BY meter_point_id"
+      )
+      .all() as { firstDate: string }[]
+  ).map((r) => r.firstDate);
+  const activeMetersOn = (date: string): number =>
+    meterFirstDates.reduce((n, first) => (first <= date ? n + 1 : n), 0);
+  const fullyComplete = dailyNets.filter(
+    (r) => r.allComplete === 1 && r.meterRows === activeMetersOn(r.d)
+  );
+
+  let projection: SummaryResponse["projection"] = null;
+  if (fullyComplete.length > 0) {
+    const basis = fullyComplete.slice(0, 14);
+    const avgDailyNetP = basis.reduce((sum, r) => sum + r.netP, 0) / basis.length;
+    const daysInMonth = parseLocalDate(today).daysInMonth!;
+    const monthComplete = fullyComplete.filter((r) => r.d >= monthStart && r.d <= today);
+    const monthCompleteNetP = monthComplete.reduce((sum, r) => sum + r.netP, 0);
+    const remaining = Math.max(0, daysInMonth - monthComplete.length);
+    projection = {
+      monthEndNetP: monthCompleteNetP + avgDailyNetP * remaining,
+      avgDailyNetP,
+      basisDays: basis.length,
+    };
+  }
+
   return {
     yesterday: tiles,
     monthToDate: {
@@ -337,10 +383,12 @@ export function getSummary(): SummaryResponse {
       netP: mtd.importP - mtd.exportP,
       importKwh: mtd.importKwh,
     },
+    projection,
     completeThroughLocalDate: completeThrough,
     generatedAt: nowUtcIso(),
   };
 }
+
 
 export function getLive(): LiveResponse {
   const db = getDb();

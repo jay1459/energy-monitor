@@ -10,6 +10,8 @@ const LINKS = [
   { href: "/", label: "Overview" },
   { href: "/usage", label: "Usage" },
   { href: "/costs", label: "Costs" },
+  { href: "/insights", label: "Insights" },
+  { href: "/compare", label: "Compare" },
 ] as const;
 
 export function TopNav() {

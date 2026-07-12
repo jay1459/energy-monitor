@@ -41,7 +41,8 @@ function rateTypesFor(tariffCode: string): RateType[] {
   return tariffCode.startsWith("E-2R-") ? ["day", "night"] : ["standard"];
 }
 
-function upsertUnitRates(db: Db, tariffCode: string, rateType: RateType, rates: RateDto[]): void {
+/** Shared with src/collector/compare.ts, which stores candidate-tariff rates. */
+export function upsertUnitRates(db: Db, tariffCode: string, rateType: RateType, rates: RateDto[]): void {
   const stmt = db.prepare(
     `INSERT INTO unit_rates
        (tariff_code, rate_type, payment_method, valid_from, valid_to, p_exc_vat, p_inc_vat)
@@ -58,7 +59,7 @@ function upsertUnitRates(db: Db, tariffCode: string, rateType: RateType, rates: 
   })();
 }
 
-function upsertStandingCharges(db: Db, tariffCode: string, rates: RateDto[]): void {
+export function upsertStandingCharges(db: Db, tariffCode: string, rates: RateDto[]): void {
   const stmt = db.prepare(
     `INSERT INTO standing_charges
        (tariff_code, payment_method, valid_from, valid_to, p_exc_vat, p_inc_vat)

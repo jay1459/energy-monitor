@@ -3,6 +3,7 @@ import { getConfig } from "@/lib/config";
 import { getState, setState } from "@/lib/db";
 import { nowUtcIso } from "@/lib/time";
 import { syncAccount } from "@/collector/bootstrap";
+import { syncCompareCandidates } from "@/collector/compare";
 import { syncConsumption } from "@/collector/consumption";
 import { syncRates } from "@/collector/rates";
 import { syncTelemetry } from "@/collector/telemetry";
@@ -16,6 +17,8 @@ import { syncTelemetry } from "@/collector/telemetry";
  * - rates          06:20 + 16:20 daily — tariff rates change rarely; the
  *                               16:20 run catches day-ahead publications
  * - account        05:10 daily — catches tariff switches / meter exchanges
+ * - compare        16:50 daily — candidate-tariff rates for /compare, after
+ *                               next-day Agile prices publish (~16:00)
  *
  * Total ≲ 10 API calls/hour — far inside the ~100/hour shared account
  * budget even with the Octopus app in use.
@@ -51,6 +54,7 @@ export async function runAllOnce(): Promise<void> {
   await runJob("account", syncAccount);
   await runJob("rates", syncRates);
   await runJob("consumption", syncConsumption);
+  await runJob("compare", syncCompareCandidates);
   await runJob("telemetry", syncTelemetry);
 }
 
@@ -70,6 +74,8 @@ export function startScheduler(): void {
   cron.schedule("5 * * * *", () => runJob("consumption", syncConsumption), tz);
   cron.schedule("20 6,16 * * *", () => runJob("rates", syncRates), tz);
   cron.schedule("10 5 * * *", () => runJob("account", syncAccount), tz);
+  // After the 16:20 rates run — next-day Agile prices publish from ~16:00.
+  cron.schedule("50 16 * * *", () => runJob("compare", syncCompareCandidates), tz);
 
   console.log(`[scheduler] started (${config.mode} mode)`);
 

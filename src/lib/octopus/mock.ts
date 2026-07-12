@@ -1,5 +1,13 @@
 import { DateTime } from "luxon";
-import { LONDON, parseInstant, todayLocal, utcIso } from "@/lib/time";
+import {
+  addLocalDays,
+  LONDON,
+  localDayBoundsUtc,
+  localDayOf,
+  parseInstant,
+  todayLocal,
+  utcIso,
+} from "@/lib/time";
 import type { EnergyDataSource } from "@/lib/octopus/source";
 import type {
   AccountInfoDto,
@@ -24,6 +32,13 @@ import type {
  *
  * Values are a pure function of the interval timestamp, so any query
  * window returns consistent data.
+ *
+ * Compare candidates: the collector's mock-mode candidates are the fixed
+ * products AGILE-24-10-01 (electricity) and SILVER-25-04-01 (electricity +
+ * gas), region C. Any tariff code containing "AGILE" gets deterministic
+ * half-hourly Agile-shaped rates; "SILVER" gets one flat Tracker-style rate
+ * per Europe/London day. Candidate standing charges are open-ended with
+ * identical prices for both payment methods.
  */
 
 export const MOCK_ELEC_IMPORT_MPAN = "1900000000000";
@@ -110,6 +125,63 @@ function exportKwh(t: LocalTime, key: number): number {
   return kwh < 0.003 ? 0 : Math.round(kwh * 1000) / 1000;
 }
 
+/**
+ * Agile-shaped candidate unit rates: one row per half-hour of [fromUtc,
+ * toUtc), base ~18p inc VAT with a 16:00–19:00 local peak (~32p) and an
+ * overnight trough (~11p), plus seeded noise. exc = inc / 1.05, payment
+ * method null like the real Agile feed.
+ */
+function agileCandidateRates(fromUtc: string, toUtc: string): RateDto[] {
+  const from = parseInstant(fromUtc);
+  // Floor to the half-hour boundary so the first row covers fromUtc.
+  let cursor = from.startOf("hour").plus({ minutes: from.minute >= 30 ? 30 : 0 });
+  const end = parseInstant(toUtc);
+  const out: RateDto[] = [];
+  while (cursor < end) {
+    const next = cursor.plus({ minutes: 30 });
+    const t = localTimeOf(cursor);
+    const key = Math.floor(cursor.toSeconds() / 1800);
+    const shaped = 18 + 14 * bump(t.hour, 17.5, 1.1) - 7 * bump(t.hour, 3.5, 2.8);
+    const inc = Math.round((shaped + 3 * (noise(key + 101) - 0.5)) * 100) / 100;
+    out.push({
+      validFrom: utcIso(cursor),
+      validTo: utcIso(next),
+      pExcVat: Math.round((inc / 1.05) * 100) / 100,
+      pIncVat: inc,
+      paymentMethod: null,
+    });
+    cursor = next;
+  }
+  return out;
+}
+
+/**
+ * Tracker-shaped candidate unit rates: one flat rate per Europe/London day
+ * covering [fromUtc, toUtc) — elec ~22.1p, gas ~5.4p inc VAT with a small
+ * seeded daily wobble. exc = inc / 1.05.
+ */
+function trackerCandidateRates(fuel: Fuel, fromUtc: string, toUtc: string): RateDto[] {
+  const base = fuel === "gas" ? 5.4 : 22.1;
+  const wobble = fuel === "gas" ? 0.5 : 1.8;
+  const out: RateDto[] = [];
+  let date = localDayOf(fromUtc);
+  for (;;) {
+    const { startUtc, endUtc } = localDayBoundsUtc(date);
+    if (startUtc >= toUtc) break;
+    const inc =
+      Math.round((base + wobble * (dayNoise(date, fuel === "gas" ? 23 : 19) - 0.5)) * 100) / 100;
+    out.push({
+      validFrom: startUtc,
+      validTo: endUtc,
+      pExcVat: Math.round((inc / 1.05) * 100) / 100,
+      pIncVat: inc,
+      paymentMethod: null,
+    });
+    date = addLocalDays(date, 1);
+  }
+  return out;
+}
+
 /** Instantaneous household demand in watts (for telemetry). */
 function demandW(instant: DateTime): number {
   const t = localTimeOf(instant);
@@ -190,10 +262,10 @@ export class MockSource implements EnergyDataSource {
   async getUnitRates(
     _productCode: string,
     tariffCode: string,
-    _fuel: Fuel,
+    fuel: Fuel,
     _rateType: RateType,
-    _fromUtc: string,
-    _toUtc: string
+    fromUtc: string,
+    toUtc: string
   ): Promise<RateDto[]> {
     const from = "2024-01-01T00:00:00Z";
     if (tariffCode === EXPORT_TARIFF) {
@@ -206,6 +278,14 @@ export class MockSource implements EnergyDataSource {
         { validFrom: from, validTo: null, pExcVat: 6.29, pIncVat: 6.6, paymentMethod: "NON_DIRECT_DEBIT" },
       ];
     }
+    // Compare candidates (see file header) — windowed, unlike the fixed
+    // open-ended rows of the household's own tariffs above.
+    if (tariffCode.includes("AGILE")) {
+      return agileCandidateRates(fromUtc, toUtc);
+    }
+    if (tariffCode.includes("SILVER")) {
+      return trackerCandidateRates(fuel, fromUtc, toUtc);
+    }
     // Flexible electricity import — duplicate rows per payment method, like the real API.
     return [
       { validFrom: from, validTo: null, pExcVat: 25.14, pIncVat: 26.4, paymentMethod: "DIRECT_DEBIT" },
@@ -216,7 +296,7 @@ export class MockSource implements EnergyDataSource {
   async getStandingCharges(
     _productCode: string,
     tariffCode: string,
-    _fuel: Fuel,
+    fuel: Fuel,
     _fromUtc: string,
     _toUtc: string
   ): Promise<RateDto[]> {
@@ -224,6 +304,15 @@ export class MockSource implements EnergyDataSource {
     if (tariffCode === EXPORT_TARIFF) {
       // Real export standing charges come back as a single zero row with null bounds.
       return [{ validFrom: from, validTo: null, pExcVat: 0, pIncVat: 0, paymentMethod: null }];
+    }
+    if (tariffCode.includes("AGILE") || tariffCode.includes("SILVER")) {
+      // Compare candidates: open-ended, identical for both payment methods.
+      const inc = fuel === "gas" ? 27.5 : 47.6;
+      const exc = Math.round((inc / 1.05) * 100) / 100;
+      return [
+        { validFrom: from, validTo: null, pExcVat: exc, pIncVat: inc, paymentMethod: "DIRECT_DEBIT" },
+        { validFrom: from, validTo: null, pExcVat: exc, pIncVat: inc, paymentMethod: "NON_DIRECT_DEBIT" },
+      ];
     }
     if (tariffCode === GAS_TARIFF) {
       return [

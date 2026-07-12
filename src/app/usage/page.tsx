@@ -41,8 +41,8 @@ import type { Resolution, StatusResponse, UsageResponse } from "@/lib/types";
  * Usage explorer: one series at a time (fuel tab), arrow/preset/custom date
  * range (presets end yesterday — REST data is day-late — and roll forward at
  * midnight; arrow-stepped or hand-picked ranges stay pinned), resolution
- * toggle. Half-hour resolution is only offered for ranges of 14 days or
- * fewer.
+ * toggle, and a CSV download of exactly the current selection. Half-hour
+ * resolution is only offered for ranges of 14 days or fewer.
  */
 
 type FuelTab = "electricity" | "gas" | "export";
@@ -128,6 +128,14 @@ export default function UsagePage() {
 
   const color = SERIES_COLOR[tab];
   const seriesName = TAB_NAME[tab];
+
+  // CSV export of exactly the on-screen selection; a plain link so the
+  // browser handles the download. Anchors have no disabled state, so "no
+  // data" gets the look (opacity) plus pointer/focus suppression instead.
+  const canExport = (usage.data?.points.length ?? 0) > 0;
+  const exportHref =
+    `/api/export?fuel=${fuel}${isExport ? "&export=1" : ""}` +
+    `&from=${from}&to=${to}&resolution=${resolution}`;
 
   if (status.data?.mode === "setup") {
     return (
@@ -220,6 +228,17 @@ export default function UsagePage() {
             { value: "month", label: "Month" },
           ]}
         />
+        <a
+          href={exportHref}
+          download
+          aria-disabled={canExport ? undefined : true}
+          tabIndex={canExport ? undefined : -1}
+          className={`rounded-lg border border-hairline bg-card px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:bg-foreground/5 ${
+            canExport ? "" : "pointer-events-none opacity-40"
+          }`}
+        >
+          Download CSV
+        </a>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:max-w-md">

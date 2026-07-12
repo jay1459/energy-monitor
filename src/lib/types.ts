@@ -243,6 +243,16 @@ export interface SummaryResponse {
     netP: number;
     importKwh: number;
   };
+  /**
+   * Projected calendar-month net cost: month-to-date plus the recent average
+   * daily net for the remaining days. Null until a complete day exists.
+   */
+  projection: {
+    monthEndNetP: number;
+    avgDailyNetP: number;
+    /** Complete days the average was taken over (up to 14). */
+    basisDays: number;
+  } | null;
   /** Latest local date with complete data across import meters. */
   completeThroughLocalDate: string | null;
   generatedAt: string;
@@ -269,6 +279,87 @@ export interface RateSummary {
 
 export interface RatesResponse {
   rates: RateSummary[];
+  generatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Insights (/api/insights)
+// ---------------------------------------------------------------------------
+
+export interface HeatmapDay {
+  date: string;
+  /**
+   * 48 slots indexed by local clock half-hour (00:00 … 23:30). Null = no
+   * reading. DST days are folded onto the 48-slot clock: the repeated hour
+   * on the 50-half-hour day is summed, the missing hour on the 46-half-hour
+   * day stays null.
+   */
+  kwh: (number | null)[];
+}
+
+export interface InsightsResponse {
+  fuel: Fuel;
+  heatmap: {
+    /** Local-date range covered, inclusive (up to 8 weeks, oldest first). */
+    from: string;
+    to: string;
+    days: HeatmapDay[];
+    /** Largest cell value — the UI's color-scale max. */
+    maxKwh: number;
+  };
+  /**
+   * Always-on draw, estimated as the median overnight (01:00–05:00 local)
+   * half-hour over the last 28 complete days. Null until enough data.
+   */
+  baseload: {
+    watts: number | null;
+    /** That draw priced at the current unit rate for a full year. */
+    annualCostP: number | null;
+    sampleDays: number;
+  };
+  weekCompare: {
+    /** Mon..Sun. Null = that day has no (complete) data. */
+    days: { weekday: string; thisWeekKwh: number | null; lastWeekKwh: number | null }[];
+    thisWeekTotalKwh: number;
+    lastWeekTotalKwh: number;
+    /**
+     * Like-for-like: computed over weekdays complete in BOTH weeks ("vs the
+     * same days last week"); null when no matched days (or matched last-week
+     * usage is 0). The totals above remain whole-week sums for display.
+     */
+    deltaPct: number | null;
+  };
+  /** Highest-usage half-hours of the last 30 days, descending. */
+  peaks: { intervalStart: string; kwh: number; costP: number | null }[];
+  generatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Tariff comparison (/api/compare)
+// ---------------------------------------------------------------------------
+
+export interface TariffQuote {
+  tariffCode: string;
+  productCode: string;
+  displayName: string;
+  fuel: Fuel;
+  /** True for the row reflecting the user's actual tariff. */
+  isCurrent: boolean;
+  energyP: number;
+  standingP: number;
+  totalP: number;
+  /** % of consumption intervals that had a rate under this tariff (0–100). */
+  coveragePct: number;
+}
+
+export interface CompareResponse {
+  from: string;
+  to: string;
+  dayCount: number;
+  /** One row per (tariff, fuel), current tariffs included, cheapest first per fuel. */
+  quotes: TariffQuote[];
+  /** When candidate rates were last synced; null before the first sync. */
+  candidatesSyncedAt: string | null;
   generatedAt: string;
 }
 

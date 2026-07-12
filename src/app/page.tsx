@@ -156,6 +156,7 @@ export default function OverviewPage() {
 
   const yd = summary.data?.yesterday;
   const mtd = summary.data?.monthToDate;
+  const projection = summary.data?.projection;
   const tilesLoading = summary.loading && !summary.data;
 
   return (
@@ -221,6 +222,10 @@ export default function OverviewPage() {
             mtd
               ? `import ${pounds(mtd.importP)}${
                   hasExport ? ` · export ${pounds(mtd.exportP)}` : ""
+                }${
+                  projection
+                    ? ` · on track for ${pounds(projection.monthEndNetP)} this month`
+                    : ""
                 }`
               : undefined
           }

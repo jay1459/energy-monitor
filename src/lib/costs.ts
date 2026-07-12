@@ -316,7 +316,8 @@ export function recomputeDaysForIntervals(
  * lands new rows; consumption-triggered recomputes can't see late rates.
  */
 export function recomputeUnpricedDays(): void {
-  const rows = getDb()
+  const db = getDb();
+  const rows = db
     .prepare(
       `SELECT meter_point_id AS meterPointId, local_date AS localDate
          FROM daily_costs WHERE intervals_priced < intervals_present`
@@ -324,16 +325,39 @@ export function recomputeUnpricedDays(): void {
     .all() as { meterPointId: number; localDate: string }[];
   if (rows.length === 0) return;
 
+  // A day can only become priceable if an agreement overlaps it. Deep
+  // backfill can reach consumption that predates the first agreement (e.g.
+  // pre-switch history) — those days would otherwise be recomputed on every
+  // rates sync forever.
+  const earliestStmt = db.prepare(
+    "SELECT MIN(valid_from) AS v FROM agreements WHERE meter_point_id = ?"
+  );
+  const cutoffByMeter = new Map<number, string | null>();
+  const cutoffFor = (meterPointId: number): string | null => {
+    if (!cutoffByMeter.has(meterPointId)) {
+      const { v } = earliestStmt.get(meterPointId) as { v: string | null };
+      // -1 day: an agreement starting mid-day still overlaps that local day.
+      cutoffByMeter.set(meterPointId, v ? addLocalDays(localDayOf(v), -1) : null);
+    }
+    return cutoffByMeter.get(meterPointId)!;
+  };
+
   const byMeter = new Map<number, string[]>();
+  let recomputed = 0;
   for (const row of rows) {
+    const cutoff = cutoffFor(row.meterPointId);
+    if (cutoff === null || row.localDate < cutoff) continue;
     const dates = byMeter.get(row.meterPointId) ?? [];
     dates.push(row.localDate);
     byMeter.set(row.meterPointId, dates);
+    recomputed += 1;
   }
   for (const [meterPointId, dates] of byMeter) {
     computeDailyCosts(meterPointId, dates);
   }
-  console.log(`[costs] re-priced ${rows.length} day(s) that had missing rates`);
+  if (recomputed > 0) {
+    console.log(`[costs] re-priced ${recomputed} day(s) that had missing rates`);
+  }
 }
 
 /**

@@ -16,6 +16,7 @@ export function GET(): Response {
       return {
         yesterday: {},
         monthToDate: { importP: 0, exportP: 0, netP: 0, importKwh: 0 },
+        projection: null,
         completeThroughLocalDate: null,
         generatedAt: nowUtcIso(),
       };
