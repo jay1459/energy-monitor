@@ -1,6 +1,13 @@
 import { deleteState, getDb, getState, setState } from "@/lib/db";
 import { getDataSource } from "@/lib/octopus/source";
-import { nowUtc, nowUtcIso, parseInstant, utcIso } from "@/lib/time";
+import {
+  localDayBoundsUtc,
+  nowUtc,
+  nowUtcIso,
+  parseInstant,
+  todayLocal,
+  utcIso,
+} from "@/lib/time";
 
 /**
  * Home Mini telemetry sync (dormant until a device exists — live mode
@@ -10,9 +17,15 @@ import { nowUtc, nowUtcIso, parseInstant, utcIso } from "@/lib/time";
  *   sync_state "telemetry_devices" as {ids, discoveredAt} and re-discovered
  *   after 24h so the GraphQL discovery query doesn't run every 10 minutes.
  * - Each run fetches a SMALL window: [max(latest stored read_at,
- *   now - 20 min), now] at ONE_MINUTE grouping (10-min cadence doesn't
+ *   now - 20 min), now] at ONE_MINUTE grouping (the poll cadence doesn't
  *   need 10s rows; upstream retention is a rolling window, so never
  *   backfill far).
+ * - ONCE per local day, per device, it also backfills [local midnight, now]
+ *   at ONE_MINUTE so /live can show the whole day rather than only since the
+ *   collector last started. The Home Mini retains today's earlier readings
+ *   (within the rolling window), and a full day is ≤1,440 nodes — safely
+ *   under the 10,000-node request cap. A per-day sync_state flag stops the
+ *   heavy fetch repeating every tick.
  * - Upsert on (device_id, read_at). Gaps from downtime are accepted —
  *   the half-hourly REST data is the durable record; telemetry powers
  *   only the live view.
@@ -93,9 +106,50 @@ export async function syncTelemetry(): Promise<void> {
        cost_delta_p = excluded.cost_delta_p`
   );
 
+  const insertReadings = (
+    deviceId: string,
+    readings: Awaited<ReturnType<typeof source.getTelemetry>>
+  ) => {
+    db.transaction(() => {
+      for (const r of readings) {
+        upsert.run(
+          deviceId,
+          r.readAt,
+          r.demandW,
+          r.consumptionWh,
+          r.exportWh,
+          r.consumptionDeltaWh,
+          r.costDeltaP
+        );
+      }
+    })();
+  };
+
   const errors: string[] = [];
   for (const deviceId of cache.ids) {
     try {
+      // Once per local day: backfill the whole day so the live view isn't
+      // limited to "since the collector started". Recovers this morning's
+      // readings on the first tick after a restart.
+      const today = todayLocal();
+      const backfillKey = `telemetry_backfill:${deviceId}:${today}`;
+      if (!getState(backfillKey)) {
+        const { startUtc } = localDayBoundsUtc(today);
+        const nowIso = nowUtcIso();
+        if (startUtc < nowIso) {
+          const dayReadings = await source.getTelemetry(
+            deviceId,
+            startUtc,
+            nowIso,
+            "ONE_MINUTE"
+          );
+          if (dayReadings.length > 0) insertReadings(deviceId, dayReadings);
+          // Mark done only after a clean fetch+insert, so a failure retries
+          // next tick rather than leaving the morning permanently missing.
+          setState(backfillKey, nowUtcIso());
+        }
+      }
+
       const { latest } = latestStmt.get(deviceId) as { latest: string | null };
       const floor = utcIso(nowUtc().minus({ minutes: WINDOW_MINUTES }));
       const fromUtc = latest && latest > floor ? latest : floor;
@@ -105,19 +159,7 @@ export async function syncTelemetry(): Promise<void> {
       const readings = await source.getTelemetry(deviceId, fromUtc, toUtc, "ONE_MINUTE");
       if (readings.length === 0) continue;
 
-      db.transaction(() => {
-        for (const r of readings) {
-          upsert.run(
-            deviceId,
-            r.readAt,
-            r.demandW,
-            r.consumptionWh,
-            r.exportWh,
-            r.consumptionDeltaWh,
-            r.costDeltaP
-          );
-        }
-      })();
+      insertReadings(deviceId, readings);
     } catch (err) {
       console.error(`[telemetry] device ${deviceId}: sync failed —`, err);
       errors.push(`${deviceId}: ${String(err)}`);
