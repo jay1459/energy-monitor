@@ -8,6 +8,7 @@ import type { StatusResponse } from "@/lib/types";
 
 const LINKS = [
   { href: "/", label: "Overview" },
+  { href: "/live", label: "Live" },
   { href: "/usage", label: "Usage" },
   { href: "/costs", label: "Costs" },
   { href: "/insights", label: "Insights" },

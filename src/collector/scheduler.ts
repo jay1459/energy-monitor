@@ -11,7 +11,9 @@ import { syncTelemetry } from "@/collector/telemetry";
 /**
  * Job schedule (all cron expressions evaluated in Europe/London):
  *
- * - telemetry      *​/10 min  — the only genuinely fresh signal (Home Mini / mock)
+ * - telemetry      *​/2 min   — the only genuinely fresh signal (Home Mini /
+ *                               mock); polled often so the /live view stays
+ *                               close to real time
  * - consumption    :05 hourly — day-late data; hourly poll is generous, and
  *                               the trailing-window upsert makes it idempotent
  * - rates          06:20 + 16:20 daily — tariff rates change rarely; the
@@ -20,8 +22,10 @@ import { syncTelemetry } from "@/collector/telemetry";
  * - compare        16:50 daily — candidate-tariff rates for /compare, after
  *                               next-day Agile prices publish (~16:00)
  *
- * Total ≲ 10 API calls/hour — far inside the ~100/hour shared account
- * budget even with the Octopus app in use.
+ * Total ≲ 35 API calls/hour (telemetry dominates at ~30) — still well inside
+ * the ~100/hour shared account budget even with the Octopus app in use. Note
+ * the cached Kraken token is reused across polls, so the faster telemetry
+ * cadence does not re-mint tokens (KT-CT-1199).
  *
  * Jobs never overlap (a slow run skips the next tick) and never throw —
  * a failed cycle logs, records the failure in sync_state, and waits for
@@ -70,7 +74,7 @@ export function startScheduler(): void {
   globalStore.__energySchedulerStarted = true;
 
   const tz = { timezone: "Europe/London" };
-  cron.schedule("*/10 * * * *", () => runJob("telemetry", syncTelemetry), tz);
+  cron.schedule("*/2 * * * *", () => runJob("telemetry", syncTelemetry), tz);
   cron.schedule("5 * * * *", () => runJob("consumption", syncConsumption), tz);
   cron.schedule("20 6,16 * * *", () => runJob("rates", syncRates), tz);
   cron.schedule("10 5 * * *", () => runJob("account", syncAccount), tz);

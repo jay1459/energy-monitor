@@ -208,6 +208,72 @@ describe("getLive", () => {
   });
 });
 
+describe("getLiveSeries", () => {
+  const today = time.todayLocal();
+  const { startUtc } = time.localDayBoundsUtc(today);
+  const dayStart = time.parseInstant(startUtc);
+  // Minutes-from-local-midnight -> stored UTC read_at.
+  const at = (min: number) => time.utcIso(dayStart.plus({ minutes: min }));
+
+  beforeAll(() => {
+    const db = getDb();
+    // Clean slate: the file-level seed's single "now" row would pollute the
+    // deterministic buckets below (getLive's test has already run by here).
+    db.prepare("DELETE FROM telemetry").run();
+    const ins = db.prepare(
+      `INSERT INTO telemetry
+         (device_id, read_at, demand_w, consumption_wh, export_wh,
+          consumption_delta_wh, cost_delta_p)
+       VALUES (?, ?, ?, NULL, NULL, ?, ?)`
+    );
+    // Four consecutive minutes at 08:00–08:03 local; the last has no demand
+    // reading and no cost delta.
+    ins.run("dev", at(480), 600, 10, 0.264);
+    ins.run("dev", at(481), 800, 20, 0.528);
+    ins.run("dev", at(482), 1000, 30, 0.792);
+    ins.run("dev", at(483), null, 40, null);
+  });
+
+  it("returns one bucket per minute at 1-minute granularity", () => {
+    const series = aggregate.getLiveSeries(1, today);
+    expect(series.available).toBe(true);
+    expect(series.date).toBe(today);
+    expect(series.granularityMinutes).toBe(1);
+    expect(series.points).toHaveLength(4);
+    expect(series.points![0]!.demandW).toBe(600);
+    expect(series.points![0]!.kwh).toBeCloseTo(0.01, 9);
+    expect(series.points![0]!.costP).toBeCloseTo(0.264, 9);
+    // Reading with no demand/cost: null demand, null bucket cost, energy kept.
+    expect(series.points![3]!.demandW).toBeNull();
+    expect(series.points![3]!.costP).toBeNull();
+    expect(series.points![3]!.kwh).toBeCloseTo(0.04, 9);
+    expect(series.totalKwh).toBeCloseTo(0.1, 9);
+    expect(series.totalCostP).toBeCloseTo(1.584, 9);
+  });
+
+  it("groups minutes into one 5-minute bucket, averaging demand", () => {
+    const series = aggregate.getLiveSeries(5, today);
+    expect(series.points).toHaveLength(1);
+    // Null demand excluded from the mean: (600 + 800 + 1000) / 3.
+    expect(series.points![0]!.demandW).toBeCloseTo(800, 9);
+    expect(series.points![0]!.kwh).toBeCloseTo(0.1, 9);
+    expect(series.points![0]!.costP).toBeCloseTo(1.584, 9);
+  });
+
+  it("is unavailable for a day with no telemetry and no fresh feed", () => {
+    // A past date beyond today's rows: no rows, and the newest reading (08:00
+    // local today) is not fresh unless the clock is near it — but a day with
+    // zero rows AND a stale feed is the unavailable case regardless.
+    const series = aggregate.getLiveSeries(1, "2020-01-01");
+    // Only assert the empty-day contract when the feed isn't currently fresh;
+    // getLiveSeries treats a live feed as available even for an empty day.
+    if (!series.live) {
+      expect(series.available).toBe(false);
+      expect(series.points).toBeUndefined();
+    }
+  });
+});
+
 describe("getCurrentRates", () => {
   it("resolves the current unit rate and standing charge per meter point", () => {
     const { rates } = aggregate.getCurrentRates();

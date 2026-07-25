@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { addLocalDays, parseLocalDate, todayLocal } from "@/lib/time";
-import type { ApiError, Fuel, Resolution } from "@/lib/types";
+import type { ApiError, Fuel, LiveGranularity, Resolution } from "@/lib/types";
 
 /**
  * Shared query-param parsing and response plumbing for the API routes.
@@ -31,6 +31,7 @@ const localDateSchema = z
 const fuelSchema = z.enum(["electricity", "gas"]);
 const resolutionSchema = z.enum(["halfhour", "day", "week", "month"]);
 const flagSchema = z.enum(["0", "1"]);
+const liveGranularitySchema = z.enum(["1", "5", "15", "30"]);
 
 function parseWith<T>(schema: z.ZodType<T>, value: string, name: string): T {
   const result = schema.safeParse(value);
@@ -78,6 +79,23 @@ export function parseExportFlag(params: URLSearchParams): boolean {
 export function parseResolution(params: URLSearchParams): Resolution {
   const value = params.get("resolution");
   return value === null ? "day" : parseWith(resolutionSchema, value, "resolution");
+}
+
+/** Live-view bucket size in minutes; defaults to 1 ("minute by minute"). */
+export function parseLiveGranularity(params: URLSearchParams): LiveGranularity {
+  const value = params.get("granularity");
+  if (value === null) return 1;
+  return Number(parseWith(liveGranularitySchema, value, "granularity")) as LiveGranularity;
+}
+
+/** Optional Europe/London local date param; null when absent. */
+export function parseOptionalLocalDate(
+  params: URLSearchParams,
+  name: string
+): string | undefined {
+  const value = params.get(name);
+  if (value === null) return undefined;
+  return parseWith(localDateSchema, value, name);
 }
 
 /** True for the "no data source in setup mode" error family from lib code. */
