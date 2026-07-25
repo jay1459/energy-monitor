@@ -1,3 +1,4 @@
+import { DateTime } from "luxon";
 import { getConfig } from "@/lib/config";
 import {
   findAgreementAt,
@@ -14,6 +15,7 @@ import {
   localDayBoundsUtc,
   nowUtc,
   nowUtcIso,
+  parseInstant,
   parseLocalDate,
   todayLocal,
   utcIso,
@@ -24,6 +26,8 @@ import type {
   DailyCostApiRow,
   Fuel,
   LiveResponse,
+  LiveSeriesPoint,
+  LiveSeriesResponse,
   MeterStatus,
   RatesResponse,
   RateSummary,
@@ -419,6 +423,109 @@ export function getLive(): LiveResponse {
     ...(latest.demandW !== null ? { demandW: latest.demandW } : {}),
     todayKwh: sums.wh / 1000,
     todayCostP: sums.p,
+  };
+}
+
+/**
+ * A single local day of telemetry, bucketed to `granularityMinutes` (buckets
+ * align to the minute; UK offsets are whole hours, so UTC-minute alignment
+ * equals local-clock alignment). Stored telemetry is already ONE_MINUTE, so
+ * one minute is the finest bucket and coarser sizes just group those rows.
+ *
+ * SINGLE-DEVICE ASSUMPTION (as in getLive): one Home Mini, so telemetry rows
+ * need no per-device dedupe before summing/averaging.
+ */
+export function getLiveSeries(
+  granularityMinutes: number,
+  dateLocal?: string
+): LiveSeriesResponse {
+  const db = getDb();
+  const date = dateLocal ?? todayLocal();
+
+  const latest = db
+    .prepare(
+      `SELECT read_at AS readAt, demand_w AS demandW FROM telemetry
+        ORDER BY read_at DESC LIMIT 1`
+    )
+    .get() as { readAt: string; demandW: number | null } | undefined;
+  const freshCutoff = utcIso(nowUtc().minus({ minutes: TELEMETRY_FRESH_MINUTES }));
+  const live = latest !== undefined && latest.readAt >= freshCutoff;
+
+  const { startUtc, endUtc } = localDayBoundsUtc(date);
+  const rows = db
+    .prepare(
+      `SELECT read_at AS readAt, demand_w AS demandW,
+              consumption_delta_wh AS deltaWh, cost_delta_p AS costP
+         FROM telemetry
+        WHERE read_at >= ? AND read_at < ?
+        ORDER BY read_at`
+    )
+    .all(startUtc, endUtc) as {
+    readAt: string;
+    demandW: number | null;
+    deltaWh: number | null;
+    costP: number | null;
+  }[];
+
+  // "No Home Mini at all" (dormant telemetry) is the only unavailable case;
+  // a live feed with no rows yet for `date` still counts as available so the
+  // page shows a "waiting for data" empty state, not the setup hint.
+  if (!live && rows.length === 0) return { available: false };
+
+  interface Acc {
+    demandSum: number;
+    demandCount: number;
+    kwh: number;
+    costP: number;
+    hasCost: boolean;
+  }
+  const bucketMs = granularityMinutes * 60_000;
+  const buckets = new Map<string, Acc>();
+  let totalKwh = 0;
+  let totalCostP = 0;
+  let anyCost = false;
+
+  for (const r of rows) {
+    const ms = parseInstant(r.readAt).toMillis();
+    const bucketStart = Math.floor(ms / bucketMs) * bucketMs;
+    const key = utcIso(DateTime.fromMillis(bucketStart, { zone: "utc" }));
+    let acc = buckets.get(key);
+    if (!acc) {
+      acc = { demandSum: 0, demandCount: 0, kwh: 0, costP: 0, hasCost: false };
+      buckets.set(key, acc);
+    }
+    if (r.demandW !== null) {
+      acc.demandSum += r.demandW;
+      acc.demandCount += 1;
+    }
+    const kwh = (r.deltaWh ?? 0) / 1000;
+    acc.kwh += kwh;
+    totalKwh += kwh;
+    if (r.costP !== null) {
+      acc.costP += r.costP;
+      acc.hasCost = true;
+      totalCostP += r.costP;
+      anyCost = true;
+    }
+  }
+
+  // rows are read_at-ascending, so Map insertion order is already chronological.
+  const points: LiveSeriesPoint[] = [...buckets.entries()].map(([t, a]) => ({
+    t,
+    demandW: a.demandCount > 0 ? a.demandSum / a.demandCount : null,
+    kwh: a.kwh,
+    costP: a.hasCost ? a.costP : null,
+  }));
+
+  return {
+    available: true,
+    date,
+    granularityMinutes,
+    points,
+    live,
+    ...(latest ? { latestReadAt: latest.readAt, latestDemandW: latest.demandW } : {}),
+    totalKwh,
+    totalCostP: anyCost ? totalCostP : null,
   };
 }
 

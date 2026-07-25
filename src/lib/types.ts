@@ -267,6 +267,41 @@ export interface LiveResponse {
   todayCostP?: number;
 }
 
+/** Minute-aligned bucket sizes offered by the live view. */
+export type LiveGranularity = 1 | 5 | 15 | 30;
+
+export interface LiveSeriesPoint {
+  /** UTC ISO of the bucket start. */
+  t: string;
+  /** Mean instantaneous demand over the bucket, W; null if no reading had one. */
+  demandW: number | null;
+  /** Energy in the bucket, kWh (summed telemetry deltas). */
+  kwh: number;
+  /** Bucket cost, pence inc VAT; null when no reading carried a cost delta. */
+  costP: number | null;
+}
+
+/**
+ * A single Europe/London day of Home Mini telemetry, bucketed to a chosen
+ * minute granularity, plus the latest live snapshot. `available` is false
+ * only when there is no Home Mini feed at all (no fresh reading and no rows
+ * for the day) — the caller then shows the "needs a Home Mini" hint.
+ */
+export interface LiveSeriesResponse {
+  available: boolean;
+  /** Local date the series covers ("yyyy-MM-dd"). */
+  date?: string;
+  granularityMinutes?: number;
+  points?: LiveSeriesPoint[];
+  /** True when the newest reading is fresh (feed is currently flowing). */
+  live?: boolean;
+  latestReadAt?: string;
+  latestDemandW?: number | null;
+  /** Day totals over the returned buckets. */
+  totalKwh?: number;
+  totalCostP?: number | null;
+}
+
 export interface RateSummary {
   fuel: Fuel;
   isExport: boolean;
